@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import android.graphics.Canvas
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
@@ -11,11 +12,14 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.BlendMode
+import android.content.Context
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.tooling.preview.Preview
 import kotlinx.coroutines.delay
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.nativeCanvas
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -24,33 +28,34 @@ data class Planet(
     val imageRes: Int,
     val orbitRadius: Float,
     val size: Float,
-    val speed: Float
+    val speed: Float,
+    val shadowRadius: Float = size / 2f
 )
 
 @Composable
 fun SolarSystemCanvas() {
+    val earth_period = 365.25f
     val planets = remember {
         listOf(
-            Planet(R.drawable.mercury, 120f, 20f, 2.0f),
-            Planet(R.drawable.venus,   170f, 30f, 1.5f),
-            Planet(R.drawable.earth,   230f, 35f, 1.0f),
-            Planet(R.drawable.mars,    290f, 25f, 0.8f),
-            Planet(R.drawable.jupiter, 380f, 70f, 0.5f),
-            Planet(R.drawable.saturn,  440f, 70f, 0.4f),
-            Planet(R.drawable.uranus,  500f, 50f, 0.2f),
-            Planet(R.drawable.neptune, 560f, 45f, 0.1f)
+            Planet(R.drawable.mercury, 120f, 20f, earth_period / 87.97f),
+            Planet(R.drawable.venus, 170f, 30f, earth_period / 224.70f),
+            Planet(R.drawable.earth, 230f, 35f, 1.0f),
+            Planet(R.drawable.mars, 290f, 25f, earth_period / 686.97f),
+            Planet(R.drawable.jupiter, 380f, 70f, earth_period / 4332.59f),
+            Planet(R.drawable.saturn, 440f, 120f, earth_period / 10759.22f, shadowRadius = 20f),
+            Planet(R.drawable.uranus, 500f, 50f, earth_period / 30688.50f),
+            Planet(R.drawable.neptune, 560f, 45f, earth_period / 60182.00f)
         )
     }
 
 
-
     val mercury = ImageBitmap.imageResource(R.drawable.mercury)
-    val venus   = ImageBitmap.imageResource(R.drawable.venus)
-    val earth   = ImageBitmap.imageResource(R.drawable.earth)
-    val mars    = ImageBitmap.imageResource(R.drawable.mars)
+    val venus = ImageBitmap.imageResource(R.drawable.venus)
+    val earth = ImageBitmap.imageResource(R.drawable.earth)
+    val mars = ImageBitmap.imageResource(R.drawable.mars)
     val jupiter = ImageBitmap.imageResource(R.drawable.jupiter)
-    val saturn  = ImageBitmap.imageResource(R.drawable.saturn)
-    val uranus  = ImageBitmap.imageResource(R.drawable.uranus)
+    val saturn = ImageBitmap.imageResource(R.drawable.saturn)
+    val uranus = ImageBitmap.imageResource(R.drawable.uranus)
     val neptune = ImageBitmap.imageResource(R.drawable.neptune)
     val sun = ImageBitmap.imageResource(R.drawable.sun)
 
@@ -75,11 +80,19 @@ fun SolarSystemCanvas() {
         }
     }
 
-    var time by remember { mutableStateOf(0f) }
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("wallpaper", Context.MODE_PRIVATE) }
+
+// Charge la dernière position sauvegardée
+    var time by remember { mutableStateOf(prefs.getFloat("time", 0f)) }
 
     LaunchedEffect(Unit) {
         while (true) {
             time += 0.02f
+            // Sauvegarde toutes les 60 frames environ
+            if (time % 1f < 0.02f) {
+                prefs.edit().putFloat("time", time).apply()
+            }
             delay(16)
         }
     }
@@ -98,7 +111,7 @@ fun SolarSystemCanvas() {
                     Color(0xFF1A0A3D).copy(alpha = 0.8f),
                     Color(0xFF020B18).copy(alpha = 0.0f)
                 ),
-                center = Offset(centerX * 0.3f, centerY * 0.4f), /
+                center = Offset(centerX * 0.3f, centerY * 0.4f),
                 radius = size.maxDimension * 0.6f
             )
         )
@@ -125,7 +138,7 @@ fun SolarSystemCanvas() {
             )
         )
 
-               // Étoiles
+        // Étoiles
         stars.forEach { (xFrac, yFrac, seed) ->
             val speed = 0.5f + seed * 2f
             val alpha = 0.1f + 0.9f * ((sin(time * 1.5f + seed * 100f) + 1f) / 2f)
@@ -162,6 +175,7 @@ fun SolarSystemCanvas() {
             ),
             dstSize = IntSize(sunSize, sunSize)
         )
+        val speedScale = 0.05f
         // Orbites
         planets.forEach { planet ->
             drawCircle(
@@ -175,7 +189,7 @@ fun SolarSystemCanvas() {
 
         // Planètes
         planets.forEach { planet ->
-            val angle = time * planet.speed
+            val angle = time * planet.speed * speedScale
             val x = centerX + planet.orbitRadius * cos(angle)
             val y = centerY + planet.orbitRadius * sin(angle)
 
@@ -194,27 +208,31 @@ fun SolarSystemCanvas() {
                 dstOffset = IntOffset((x - size / 2f).toInt(), (y - size / 2f).toInt()),
                 dstSize = IntSize(size, size)
             )
-            val shadowAngle = atan2(y - centerY, x - centerX) /
+// Ombre croissant
+            val shadowAngle = atan2(y - centerY, x - centerX)
 
-            val shadowPath = Path().apply {
+            val nativeCanvas = drawContext.canvas.nativeCanvas
+            val checkpoint = nativeCanvas.saveLayer(null, null)
 
-                addArc(
-                    oval = androidx.compose.ui.geometry.Rect(
-                        center = Offset(x, y),
-                        radius = planet.size / 2f
-                    ),
-                    startAngleDegrees = Math.toDegrees(shadowAngle.toDouble()).toFloat() - 90f,
-                    sweepAngleDegrees = 180f
-                )
-
-                lineTo(x, y)
-                close()
-            }
-
-            drawPath(
-                path = shadowPath,
-                color = Color.Black.copy(alpha = 0.6f)
+            drawCircle(
+                color = Color.Black.copy(alpha = 0.6f),
+                radius = planet.shadowRadius,
+                center = Offset(x, y)
             )
+
+            val crescentOffsetX = cos(shadowAngle) * (planet.shadowRadius * 0.4f)
+            val crescentOffsetY = sin(shadowAngle) * (planet.shadowRadius * 0.4f)
+
+            drawCircle(
+                color = Color.Transparent,
+                radius = planet.shadowRadius * 0.90f,
+                center = Offset(x - crescentOffsetX, y - crescentOffsetY),
+                blendMode = BlendMode.Clear
+            )
+
+            nativeCanvas.restoreToCount(checkpoint)
+
+
         }
     }
 }
